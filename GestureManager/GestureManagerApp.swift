@@ -45,12 +45,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showPreviewWindow() {
-        let panelWidth: CGFloat = 800
-        let panelHeight: CGFloat = 500
-        
         if previewWindow == nil {
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+                contentRect: NSRect(x: 0, y: 0, width: 0, height: 0),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -65,35 +62,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.ignoresMouseEvents = false
             
             let hostingView = NSHostingView(rootView: WorkspacePreviewView(previewManager: previewManager))
-            hostingView.translatesAutoresizingMaskIntoConstraints = false
+            hostingView.sizingOptions = [.intrinsicContentSize]
             
-            let contentView = NSView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
-            contentView.addSubview(hostingView)
-            panel.contentView = contentView
-            
-            NSLayoutConstraint.activate([
-                hostingView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                hostingView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                hostingView.topAnchor.constraint(equalTo: contentView.topAnchor),
-                hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
-            ])
-            
+            panel.contentView = hostingView
             previewWindow = panel
         }
         
         if let panel = previewWindow, let screen = NSScreen.main {
-            panel.setFrame(NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight), display: true)
+            // 1. Force the hosting view to compute its geometry right now based on the current active data
+            panel.contentView?.layoutSubtreeIfNeeded()
             
+            // 2. Safely capture the true calculated intrinsic dimensions
+            let targetSize = panel.contentView?.intrinsicContentSize ?? NSSize(width: 400, height: 200)
+            
+            // 3. Pin down the coordinates relative to the screen frame
             let rawFrame = screen.frame
-            let x = rawFrame.minX + (rawFrame.width - panelWidth) / 2
-            let y = rawFrame.minY + (rawFrame.height - panelHeight) / 2
+            let x = rawFrame.minX + (rawFrame.width - targetSize.width) / 2
             
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
+            // App switchers look best slightly below the absolute center vertically.
+            // If you want absolute mathematical center, change ' / 2.2' to ' / 2'
+            let y = rawFrame.minY + (rawFrame.height - targetSize.height) / 2.2
+            
+            // 4. Update the frame boundaries immediately before making it visible
+            panel.setFrame(NSRect(x: x, y: y, width: targetSize.width, height: targetSize.height), display: true, animate: false)
+            
             panel.alphaValue = 0
             panel.orderFrontRegardless()
             
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
+                context.duration = 0.10
                 panel.animator().alphaValue = 1.0
             }
         }

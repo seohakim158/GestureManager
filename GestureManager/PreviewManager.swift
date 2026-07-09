@@ -2,7 +2,6 @@ import Cocoa
 import Foundation
 import SwiftUI
 import Combine
-import os
 
 enum NavigationDirection {
     case left
@@ -71,11 +70,6 @@ class PreviewManager: ObservableObject {
     private var lastTapReleaseTime: Date? = nil
     private var isCooldownActive = false
 
-    private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "PreviewAerospace",
-        category: "Swipe"
-    )
-
     private func runAerospaceCLI(args: [String], stdin: String = "") -> Result<String, PreviewError> {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/aerospace")
@@ -115,7 +109,6 @@ class PreviewManager: ObservableObject {
 
     func start() {
         if eventTap != nil { return }
-        logger.info("PreviewManager start")
 
         eventTap = CGEvent.tapCreate(
             tap: .cghidEventTap,
@@ -165,7 +158,6 @@ class PreviewManager: ObservableObject {
 
         if activeTouches.isEmpty {
             if gestureInProgress {
-                logger.info("Fingers left the glass. Tearing down all active UI overlays.")
                 cursorLockPosition = nil
                 handleGestureEnd()
                 
@@ -184,6 +176,9 @@ class PreviewManager: ObservableObject {
                 CGWarpMouseCursorPosition(lockPos)
             }
         } else {
+            if count == 1 && !gestureInProgress {
+                return
+            }
             if count != 3 && count != 4 {
                 if count == 0 { resetGesture() }
                 return
@@ -191,7 +186,7 @@ class PreviewManager: ObservableObject {
         }
 
         if !gestureInProgress {
-            if let lastRelease = lastTapReleaseTime, Date().timeIntervalSince(lastRelease) * 1000 < 100 {
+            if let lastRelease = lastTapReleaseTime, Date().timeIntervalSince(lastRelease) * 1000 < 250 {
                 return
             }
 
@@ -225,7 +220,6 @@ class PreviewManager: ObservableObject {
             if downCountTemp >= 2 {
                 gestureActionTriggered = true
                 ignoreNextDown = false
-                logger.info("Downward swipe intercepted and successfully ignored via ignoreNextDown flag.")
                 return
             }
         }
@@ -322,15 +316,12 @@ class PreviewManager: ObservableObject {
             if upCount == 3 {
                 gestureActionTriggered = true
                 ignoreNextDown = true
-                logger.info("3 fingers swiped up. ignoreNextDown armed.")
                 return
             }
 
-            let absoluteVerticalDiscrepancy = abs(totalY)
-            let isSplitGesture = (downCount == 2 && upCount == 1 && absoluteVerticalDiscrepancy < 0.02) ||
-                                 (upCount == 2 && downCount == 1 && absoluteVerticalDiscrepancy < 0.02)
+            let isStrictSplitGesture = (downCount == 2 && upCount == 1) || (upCount == 2 && downCount == 1)
 
-            if isSplitGesture {
+            if isStrictSplitGesture {
                 gestureActionTriggered = true
                 openLaunchNext()
                 return
@@ -350,6 +341,57 @@ class PreviewManager: ObservableObject {
         }
     }
 
+    private func handleGestureEnd() {
+        guard gestureInProgress else { return }
+
+        if !showPreview {
+            lastTapReleaseTime = Date()
+        }
+
+        if showPreview {
+            if let startTime = gestureStartTime, Date().timeIntervalSince(startTime) * 1000 < previewThresholdMs {
+                let hasNavigated = windowSwitcherMode ? (!selectedWindowID.isEmpty) : (!selectedWorkspace.isEmpty)
+                if !hasNavigated || abs(accDisY) > 0.05 {
+                    hidePreview()
+                    resetGesture()
+                    return
+                }
+            }
+
+            if windowSwitcherMode {
+                if !selectedWindowID.isEmpty {
+                    switchToWindow(selectedWindowID)
+                }
+            } else {
+                if !selectedWorkspace.isEmpty {
+                    switchToWorkspace(selectedWorkspace)
+                }
+            }
+            resetGesture()
+        } else {
+            if let startTime = gestureStartTime, !gestureActionTriggered, !isCooldownActive {
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
+                
+                if durationMs < previewThresholdMs {
+                    if dynamicFingerCount == 3 {
+                        if accDisY < -0.01 {
+                            resetGesture()
+                            quickSwitchWorkspace()
+                            return
+                        }
+                    } else if dynamicFingerCount == 4 {
+                        if abs(accDisY) > 0.01 {
+                            resetGesture()
+                            switchToLastUsedApp()
+                            return
+                        }
+                    }
+                }
+            }
+            resetGesture()
+        }
+    }
+
     private func openLaunchNext() {
         guard !hasOpenedLaunchNext else { return }
         hasOpenedLaunchNext = true
@@ -358,13 +400,7 @@ class PreviewManager: ObservableObject {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
 
-        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] _, error in
-            if let error = error {
-                self?.logger.error("Failed to open LaunchNext.app: \(error.localizedDescription)")
-            } else {
-                self?.logger.info("Successfully opened LaunchNext.app")
-            }
-        }
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in }
     }
 
     private func navigateItems(direction: NavigationDirection) {
@@ -395,58 +431,6 @@ class PreviewManager: ObservableObject {
             if sortedWorkspaces.indices.contains(newIndex) && newIndex != currentIndex {
                 selectedWorkspace = sortedWorkspaces[newIndex]
             }
-        }
-    }
-
-    private func handleGestureEnd() {
-        guard gestureInProgress else { return }
-        
-        logger.info("Gesture engine handling wrap-up actions.")
-
-        if !showPreview {
-            lastTapReleaseTime = Date()
-        }
-
-        if showPreview {
-            if let startTime = gestureStartTime, Date().timeIntervalSince(startTime) * 1000 < previewThresholdMs {
-                let hasNavigated = windowSwitcherMode ? (!selectedWindowID.isEmpty) : (!selectedWorkspace.isEmpty)
-                if !hasNavigated || abs(accDisY) > 0.05 {
-                    logger.info("Awkward/Fast long swipe detected during preview. Tearing down overlay.")
-                    hidePreview()
-                    resetGesture()
-                    return
-                }
-            }
-
-            if windowSwitcherMode {
-                if !selectedWindowID.isEmpty {
-                    switchToWindow(selectedWindowID)
-                }
-            } else {
-                if !selectedWorkspace.isEmpty {
-                    switchToWorkspace(selectedWorkspace)
-                }
-            }
-            resetGesture()
-        } else {
-            if let startTime = gestureStartTime, !gestureActionTriggered, !isCooldownActive {
-                let durationMs = Date().timeIntervalSince(startTime) * 1000
-                
-                if durationMs < previewThresholdMs && abs(accDisY) > 0.01 {
-                    if dynamicFingerCount == 3 {
-                        logger.info("Quick workspace switch triggered via short 3-finger placement duration: \(durationMs)ms")
-                        resetGesture()
-                        quickSwitchWorkspace()
-                        return
-                    } else if dynamicFingerCount == 4 {
-                        logger.info("Quick app switch triggered via short 4-finger flick: \(durationMs)ms")
-                        resetGesture()
-                        switchToLastUsedApp()
-                        return
-                    }
-                }
-            }
-            resetGesture()
         }
     }
     
@@ -590,7 +574,7 @@ class PreviewManager: ObservableObject {
         hidePreview()
     }
 
-    private func runSketchybarTrigger() {
+    nonisolated private func runSketchybarTrigger() {
         let task = Process()
         task.launchPath = "/bin/bash"
         task.arguments = ["-c", "/opt/homebrew/bin/sketchybar --trigger aerospace_workspace_change"]
