@@ -5,16 +5,12 @@ internal import UniformTypeIdentifiers
 struct WorkspacePreviewView: View {
     @ObservedObject var previewManager: PreviewManager
 
-    // Simple math calculation for dynamic workspace sizing
     private var computedWorkspaceHeight: CGFloat {
         let maxAppCount = previewManager.workspaceApps.values.map { $0.count }.max() ?? 0
-        let safeAppCount = max(maxAppCount, 1)
+        let safeAppCount = CGFloat(max(maxAppCount, 1))
         
-        let iconSize: CGFloat = 64
-        let iconSpacing: CGFloat = 12
-        let verticalPadding: CGFloat = 32
-        
-        return (CGFloat(safeAppCount) * iconSize) + (CGFloat(safeAppCount - 1) * iconSpacing) + verticalPadding
+        // (Count * 64) + ((Count - 1) * 12) + 32
+        return (safeAppCount * 64) + ((safeAppCount - 1) * 12) + 32
     }
 
     var body: some View {
@@ -54,11 +50,13 @@ struct WorkspacePreviewView: View {
                         }
                     }
                     .padding(.top, 24)
-                    .padding(.bottom, 28) // Kept the beautiful vertical breathing room here
+                    .padding(.bottom, 28)
                     
                     // Row 2: Icons
                     HStack(alignment: .top, spacing: 16) {
                         ForEach(workspaces, id: \.self) { ws in
+                            let isCurrentWorkspace = (ws == previewManager.selectedWorkspace)
+                            
                             VStack(spacing: 0) {
                                 Spacer(minLength: 0)
                                 
@@ -69,10 +67,10 @@ struct WorkspacePreviewView: View {
                                             .fill(Color.secondary.opacity(0.15))
                                             .frame(width: 52, height: 52)
                                     } else {
-                                        ForEach(Array(apps.enumerated()), id: \.offset) { index, appName in
+                                        ForEach(Array(apps.enumerated()), id: \.offset) { _, appName in
                                             AppIconView(
                                                 appName: appName,
-                                                isSelected: ws == previewManager.selectedWorkspace,
+                                                isSelected: isCurrentWorkspace,
                                                 size: 64
                                             )
                                         }
@@ -84,9 +82,9 @@ struct WorkspacePreviewView: View {
                             .padding(.vertical, 16)
                             .padding(.horizontal, 12)
                             .frame(width: 110, height: dynamicAppsHeight)
-                            .background(ws == previewManager.selectedWorkspace ? Color(white: 0.25).opacity(0.6) : Color.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .scaleEffect(ws == previewManager.selectedWorkspace ? 1.04 : 1.0)
-                            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: previewManager.selectedWorkspace)
+                            .background(isCurrentWorkspace ? Color(white: 0.25).opacity(0.6) : Color.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .scaleEffect(isCurrentWorkspace ? 1.04 : 1.0)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isCurrentWorkspace)
                             .onTapGesture {
                                 previewManager.switchToWorkspace(ws)
                             }
@@ -100,7 +98,6 @@ struct WorkspacePreviewView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
         }
-        // This gives SwiftUI a non-zero footprint pass-through constraint that AppKit can read cleanly!
         .fixedSize(horizontal: true, vertical: true)
     }
 }
@@ -110,24 +107,36 @@ struct WindowColumn: View {
     let isSelected: Bool
 
     var body: some View {
-        VStack(alignment: .center, spacing: 14) {
+        VStack(alignment: .center, spacing: 8) {
             Spacer(minLength: 0)
             
             AppIconView(appName: window.appName, isSelected: isSelected, size: 64)
+                .padding(.bottom, 4)
             
-            Text(window.appName)
-                .font(.system(size: 17, weight: .black))
-                .foregroundColor(isSelected ? .white : .primary.opacity(0.7))
-                .lineLimit(nil)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .center, spacing: 2) {
+                Text(window.appName)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(isSelected ? .white : .primary.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                
+                Text(window.windowTitle)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(width: 90)
             
             Spacer(minLength: 0)
         }
         .padding(.vertical, 16)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .frame(width: 110, height: 170)
-        .background(isSelected ? Color(white: 0.25).opacity(0.6) : Color.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(
+            isSelected ? Color(white: 0.25).opacity(0.6) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
         .scaleEffect(isSelected ? 1.04 : 1.0)
         .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
     }

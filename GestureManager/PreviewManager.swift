@@ -3,29 +3,23 @@ import Foundation
 import SwiftUI
 import Combine
 
-enum NavigationDirection {
-    case left
-    case right
-}
-
 enum DirectionSwipe {
     case next
     case prev
+    case left
+    case right
 
     var value: String {
         switch self {
         case .next: return "next"
         case .prev: return "prev"
+        default: return ""
         }
     }
 }
 
 enum PreviewError: Error {
     case ExecutionError(String)
-}
-
-class SocketInfo: ObservableObject {
-    @Published var socketConnected: Bool = true
 }
 
 struct AeroWindow {
@@ -41,7 +35,6 @@ class PreviewManager: ObservableObject {
         case left; case right; case up; case down
     }
 
-    @Published var socketInfo = SocketInfo()
     @Published var workspaceApps: [String: [String]] = [:]
     @Published var openWindows: [AeroWindow] = []
     @Published var showPreview = false
@@ -53,11 +46,9 @@ class PreviewManager: ObservableObject {
     var onHidePreview: (() -> Void)?
 
     private var eventTap: CFMachPort? = nil
-    private var accDisY: Float = 0
     private var accDisX: Float = 0
     private var prevTouchPositions: [String: NSPoint] = [:]
     private var gestureInProgress = false
-    private var verticalLocked = false
     private var gestureStartTime: Date?
     private var previewThresholdMs: Double = 100.0
     private var navigationMode = false
@@ -68,7 +59,6 @@ class PreviewManager: ObservableObject {
     private var dynamicFingerCount = 3
     private var cursorLockPosition: NSPoint? = nil
     private var lastTapReleaseTime: Date? = nil
-    private var isCooldownActive = false
 
     private func runAerospaceCLI(args: [String], stdin: String = "") -> Result<String, PreviewError> {
         let task = Process()
@@ -110,11 +100,13 @@ class PreviewManager: ObservableObject {
     func start() {
         if eventTap != nil { return }
 
+        let mask = NSEvent.EventTypeMask.gesture.rawValue | NSEvent.EventTypeMask.keyDown.rawValue
+
         eventTap = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: NSEvent.EventTypeMask.gesture.rawValue,
+            eventsOfInterest: mask,
             callback: { proxy, type, cgEvent, me in
                 let wrapper = Unmanaged<PreviewManager>.fromOpaque(me!).takeUnretainedValue()
                 return wrapper.eventHandler(proxy: proxy, eventType: type, cgEvent: cgEvent)
@@ -138,12 +130,47 @@ class PreviewManager: ObservableObject {
     }
 
     private func eventHandler(proxy: CGEventTapProxy, eventType: CGEventType, cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
+        if eventType == .keyDown && showPreview && windowSwitcherMode {
+            if let nsEvent = NSEvent(cgEvent: cgEvent) {
+                if nsEvent.charactersIgnoringModifiers?.lowercased() == "q" {
+                    closeSelectedWindow()
+                    return nil
+                }
+            }
+        }
+        
         if eventType.rawValue == NSEvent.EventType.gesture.rawValue, let nsEvent = NSEvent(cgEvent: cgEvent) {
             touchEventHandler(nsEvent)
         } else if eventType == .tapDisabledByUserInput || eventType == .tapDisabledByTimeout {
             if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
         }
         return Unmanaged.passUnretained(cgEvent)
+    }
+
+    private func closeSelectedWindow() {
+        let windowIDToClose = selectedWindowID
+        guard !windowIDToClose.isEmpty else { return }
+        
+        guard let currentIndex = openWindows.firstIndex(where: { $0.windowID == windowIDToClose }) else { return }
+        
+        _ = runAerospaceCLI(args: ["close", "--quit-if-last-window", "--window-id", windowIDToClose])
+        
+        var nextSelectedID = ""
+        if openWindows.count > 1 {
+            if currentIndex < openWindows.count - 1 {
+                nextSelectedID = openWindows[currentIndex + 1].windowID
+            } else {
+                nextSelectedID = openWindows[currentIndex - 1].windowID
+            }
+        }
+        
+        fetchOpenWindows()
+        
+        DispatchQueue.main.async {
+            if !nextSelectedID.isEmpty {
+                self.selectedWindowID = nextSelectedID
+            }
+        }
     }
 
     private func touchEventHandler(_ nsEvent: NSEvent) {
@@ -186,25 +213,28 @@ class PreviewManager: ObservableObject {
         }
 
         if !gestureInProgress {
-            if let lastRelease = lastTapReleaseTime, Date().timeIntervalSince(lastRelease) * 1000 < 250 {
-                return
+            let incomingCount = activeTouches.count
+            
+            if let lastRelease = lastTapReleaseTime {
+                let elapsedMs = Date().timeIntervalSince(lastRelease) * 1000
+                let requiredCooldown: Double = (incomingCount == 3) ? 0.0 : 100.0
+                
+                if elapsedMs < requiredCooldown {
+                    return
+                }
             }
 
             gestureInProgress = true
             dynamicFingerCount = count
             gestureActionTriggered = false
-            accDisX = 0; accDisY = 0
+            accDisX = 0
             prevTouchPositions.removeAll()
             gestureStartTime = Date()
             navigationMode = showPreview
             hasOpenedLaunchNext = false
-            verticalLocked = false
-            isCooldownActive = false
         } else if !navigationMode && count > dynamicFingerCount {
             dynamicFingerCount = count
         }
-
-        if isCooldownActive { return }
         
         if dynamicFingerCount == 3 && ignoreNextDown {
             var downCountTemp = 0
@@ -253,12 +283,7 @@ class PreviewManager: ObservableObject {
 
         if directions.count < count || count == 0 { return }
 
-        if abs(totalY) > abs(totalX) && !navigationMode {
-            verticalLocked = true
-        }
-
         accDisX += totalX
-        accDisY += totalY
 
         let leftCount  = directions.filter { $0 == .left }.count
         let rightCount = directions.filter { $0 == .right }.count
@@ -271,7 +296,7 @@ class PreviewManager: ObservableObject {
 
             if elapsed > previewThresholdMs {
                 if !showPreview {
-                    let totalMovement = abs(accDisX) + abs(accDisY)
+                    let totalMovement = abs(accDisX) + abs(totalY)
                     if totalMovement < 0.015 { return }
 
                     gestureActionTriggered = true
@@ -327,13 +352,13 @@ class PreviewManager: ObservableObject {
                 return
             }
 
-            if (leftCount >= 2) && !verticalLocked {
+            if (leftCount >= 2) {
                 gestureActionTriggered = true
                 switchWorkspaceDirectional(direction: .prev)
                 return
             }
 
-            if (rightCount >= 2) && !verticalLocked {
+            if (rightCount >= 2) {
                 gestureActionTriggered = true
                 switchWorkspaceDirectional(direction: .next)
                 return
@@ -351,7 +376,7 @@ class PreviewManager: ObservableObject {
         if showPreview {
             if let startTime = gestureStartTime, Date().timeIntervalSince(startTime) * 1000 < previewThresholdMs {
                 let hasNavigated = windowSwitcherMode ? (!selectedWindowID.isEmpty) : (!selectedWorkspace.isEmpty)
-                if !hasNavigated || abs(accDisY) > 0.05 {
+                if !hasNavigated || abs(accDisX) > 0.05 {
                     hidePreview()
                     resetGesture()
                     return
@@ -369,22 +394,18 @@ class PreviewManager: ObservableObject {
             }
             resetGesture()
         } else {
-            if let startTime = gestureStartTime, !gestureActionTriggered, !isCooldownActive {
+            if let startTime = gestureStartTime, !gestureActionTriggered {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 
                 if durationMs < previewThresholdMs {
                     if dynamicFingerCount == 3 {
-                        if accDisY < -0.01 {
-                            resetGesture()
-                            quickSwitchWorkspace()
-                            return
-                        }
+                        resetGesture()
+                        quickSwitchWorkspace()
+                        return
                     } else if dynamicFingerCount == 4 {
-                        if abs(accDisY) > 0.01 {
-                            resetGesture()
-                            switchToLastUsedApp()
-                            return
-                        }
+                        resetGesture()
+                        switchToLastUsedApp()
+                        return
                     }
                 }
             }
@@ -403,7 +424,7 @@ class PreviewManager: ObservableObject {
         NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in }
     }
 
-    private func navigateItems(direction: NavigationDirection) {
+    private func navigateItems(direction: DirectionSwipe) {
         if windowSwitcherMode {
             guard !openWindows.isEmpty else { return }
             
@@ -412,6 +433,7 @@ class PreviewManager: ObservableObject {
             switch direction {
             case .right: newIndex = min(currentIndex + 1, openWindows.count - 1)
             case .left:  newIndex = max(currentIndex - 1, 0)
+            default:     return
             }
             
             if openWindows.indices.contains(newIndex) {
@@ -426,6 +448,7 @@ class PreviewManager: ObservableObject {
             switch direction {
             case .right: newIndex = min(currentIndex + 1, sortedWorkspaces.count - 1)
             case .left:  newIndex = max(currentIndex - 1, 0)
+            default:     return
             }
 
             if sortedWorkspaces.indices.contains(newIndex) && newIndex != currentIndex {
@@ -436,14 +459,12 @@ class PreviewManager: ObservableObject {
     
     private func resetGesture() {
         gestureInProgress = false
-        accDisY = 0; accDisX = 0
+        accDisX = 0
         prevTouchPositions.removeAll()
-        verticalLocked = false
         gestureStartTime = nil
         navigationMode = false
         hasOpenedLaunchNext = false
         gestureActionTriggered = false
-        isCooldownActive = false
         showPreview = false
     }
 
@@ -497,22 +518,34 @@ class PreviewManager: ObservableObject {
     }
 
     func fetchOpenWindows() {
-        let res = runAerospaceCLI(args: ["list-windows", "--all", "--format", "window-id=%{window-id},app-name=%{app-name},window-title=%{window-title}"])
+        let res = runAerospaceCLI(args: ["list-windows", "--all", "--format", "window-id=%{window-id},app-name=%{app-name},window-title=%{window-title},workspace=%{workspace}"])
         guard case .success(let stdout) = res else { return }
 
-        var parsedWindows: [AeroWindow] = []
+        var intermediateWindows: [(window: AeroWindow, workspace: String)] = []
+        
         stdout.split(separator: "\n").forEach { line in
             let parts = line.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            var wID = "", app = "", title = ""
+            var wID = "", app = "", title = "", ws = ""
             for part in parts {
                 if part.hasPrefix("window-id=") { wID = part.replacingOccurrences(of: "window-id=", with: "") }
                 if part.hasPrefix("app-name=") { app = part.replacingOccurrences(of: "app-name=", with: "") }
                 if part.hasPrefix("window-title=") { title = part.replacingOccurrences(of: "window-title=", with: "") }
+                if part.hasPrefix("workspace=") { ws = part.replacingOccurrences(of: "workspace=", with: "") }
             }
             if !wID.isEmpty {
-                parsedWindows.append(AeroWindow(windowID: wID, appName: app, windowTitle: title))
+                let windowItem = AeroWindow(windowID: wID, appName: app, windowTitle: title)
+                intermediateWindows.append((window: windowItem, workspace: ws))
             }
         }
+
+        intermediateWindows.sort {
+            if $0.workspace != $1.workspace {
+                return $0.workspace < $1.workspace
+            }
+            return $0.window.appName.localizedStandardCompare($1.window.appName) == .orderedAscending
+        }
+
+        let parsedWindows = intermediateWindows.map { $0.window }
 
         let focusRes = runAerospaceCLI(args: ["list-windows", "--focused", "--format", "%{window-id}"])
         var focusedID = ""

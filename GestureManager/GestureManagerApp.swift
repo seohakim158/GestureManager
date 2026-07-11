@@ -11,7 +11,7 @@ func checkAccessibilityPermissions() {
             URL(filePath: "/usr/bin/tccutil"),
             arguments: ["reset", "Accessibility", bundleID]
         )
-        NSApplication.shared.terminate(nil)
+        NSApp.terminate(nil)
     }
 }
 
@@ -69,23 +69,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         if let panel = previewWindow, let screen = NSScreen.main {
-            // 1. Force the hosting view to compute its geometry right now based on the current active data
             panel.contentView?.layoutSubtreeIfNeeded()
             
-            // 2. Safely capture the true calculated intrinsic dimensions
             let targetSize = panel.contentView?.intrinsicContentSize ?? NSSize(width: 400, height: 200)
-            
-            // 3. Pin down the coordinates relative to the screen frame
             let rawFrame = screen.frame
             let x = rawFrame.minX + (rawFrame.width - targetSize.width) / 2
-            
-            // App switchers look best slightly below the absolute center vertically.
-            // If you want absolute mathematical center, change ' / 2.2' to ' / 2'
             let y = rawFrame.minY + (rawFrame.height - targetSize.height) / 2.2
             
-            // 4. Update the frame boundaries immediately before making it visible
             panel.setFrame(NSRect(x: x, y: y, width: targetSize.width, height: targetSize.height), display: true, animate: false)
-            
             panel.alphaValue = 0
             panel.orderFrontRegardless()
             

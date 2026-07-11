@@ -2,14 +2,13 @@ import Cocoa
 
 class PrivacyHelper {
     static func isProcessTrustedWithPrompt() -> Bool {
-        let isAccessibilityPermissionGranted = AXIsProcessTrustedWithOptions(
-            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-                as CFDictionary
-        )
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let isAccessibilityPermissionGranted = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        
         if isAccessibilityPermissionGranted {
             return true
         } else {
-            PrivacyHelper.promptForAccessibilityPermissionFromSandbox()
+            promptForAccessibilityPermissionFromSandbox()
             return false
         }
     }
@@ -27,10 +26,10 @@ class PrivacyHelper {
 }
 
 private func dummyEventHandler(
-    proxy: CGEventTapProxy,
-    eventType: CGEventType,
+    _: CGEventTapProxy,
+    _: CGEventType,
     cgEvent: CGEvent,
-    userInfo: UnsafeMutableRawPointer?
+    _: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
     debugPrint("Should never happen!")
     return Unmanaged.passUnretained(cgEvent)
