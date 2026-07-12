@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app
+        run: |
+          xcodebuild \
+            -scheme GestureManager \
+            -configuration Release \
+            -derivedDataPath build
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+
+          create-dmg \
+            --volname "GestureManager" \
+            --app-drop-link 600 185 \
+            GestureManager.dmg \
+            build/Build/Products/Release/GestureManager.app
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GestureManager.dmg
