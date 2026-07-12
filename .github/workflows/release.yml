@@ -37,3 +37,48 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: GestureManager.dmg
+
+      - name: Get version and SHA256
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          echo "SHA256=$(shasum -a 256 GestureManager.dmg | awk '{print $1}')" >> $GITHUB_ENV
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: seohakim158/homebrew-gesturemanager
+          token: ${{ secrets.HOMEBREW_PAT }}
+          path: homebrew-tap
+
+      - name: Update cask
+        run: |
+          cat > homebrew-tap/Casks/gesturemanager.rb <<EOF
+          cask "gesturemanager" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/seohakim158/GestureManager/releases/download/v#{version}/GestureManager.dmg"
+
+            name "GestureManager"
+            desc "Gesture manager for macOS (requires AeroSpace)"
+            homepage "https://github.com/seohakim158/GestureManager"
+
+            app "GestureManager.app"
+          end
+          EOF
+
+      - name: Commit and push cask
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add Casks/gesturemanager.rb
+
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+
+          git commit -m "Update GestureManager to ${VERSION}"
+          git push
