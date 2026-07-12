@@ -6,15 +6,11 @@ import Combine
 enum DirectionSwipe {
     case next
     case prev
-    case left
-    case right
 
     var value: String {
         switch self {
         case .next: return "next"
         case .prev: return "prev"
-        case .left: return "left"
-        case .right: return "right"
         }
     }
 }
@@ -217,32 +213,13 @@ class PreviewManager: ObservableObject {
         }
 
         if !gestureInProgress {
-            let incomingCount = activeTouches.count
-            let now = Date()
-            
-            // --- DETECT TAP-LIFT-DRAG SEQUENCES ---
-            if let lastRelease = lastTapReleaseTime {
-                let elapsedMs = now.timeIntervalSince(lastRelease) * 1000
-                
-                // If a new touch sequence begins within 300ms of a release,
-                // it's a tap-and-drag follow-through.
-                if elapsedMs < 300.0 {
-                    isTapDragBypassActive = true
-                }
-                
-                let requiredCooldown: Double = (incomingCount == 3) ? 0.0 : 100.0
-                if elapsedMs < requiredCooldown {
-                    return
-                }
-            }
-
             gestureInProgress = true
             dynamicFingerCount = count
             gestureActionTriggered = false
-            isTapDragBypassActive = isTapDragBypassActive || showPreview // Keep active if navigating
+            
             accDisX = 0; accDisY = 0
             prevTouchPositions.removeAll()
-            gestureStartTime = now
+            gestureStartTime = Date()
             navigationMode = showPreview
             hasOpenedLaunchNext = false
             verticalLocked = false
@@ -275,6 +252,7 @@ class PreviewManager: ObservableObject {
         var directions: [FingerDirection] = []
         var totalX: Float = 0
         var totalY: Float = 0
+        let velocityMultiplier = 4.0 / Float(count)
 
         for touch in activeTouches {
             let id = "\(touch.identity)"
@@ -288,7 +266,6 @@ class PreviewManager: ObservableObject {
             let dx = Float(pos.x - prev.x)
             let dy = Float(pos.y - prev.y)
             
-            let velocityMultiplier = 4.0 / Float(count)
             totalX += dx * velocityMultiplier
             totalY += dy * velocityMultiplier
 
@@ -301,6 +278,14 @@ class PreviewManager: ObservableObject {
 
         if abs(totalY) > abs(totalX) && !navigationMode {
             verticalLocked = true
+            
+            if let lastRelease = lastTapReleaseTime {
+                let elapsedMs = Date().timeIntervalSince(lastRelease) * 1000
+                if elapsedMs < 300.0 && dynamicFingerCount == 3 {
+                    isTapDragBypassActive = true
+                    return
+                }
+            }
         }
 
         accDisX += totalX
@@ -344,12 +329,12 @@ class PreviewManager: ObservableObject {
             
             if now.timeIntervalSince(lastNavigatedDate) > 0.10 {
                 if leftCount >= 1 || totalX < -strideThreshold {
-                    navigateItems(direction: .left)
+                    navigateItems(direction: .prev)
                     accDisX = 0
                     prevTouchPositions.removeAll()
                     lastNavigatedDate = now
                 } else if rightCount >= 1 || totalX > strideThreshold {
-                    navigateItems(direction: .right)
+                    navigateItems(direction: .next)
                     accDisX = 0
                     prevTouchPositions.removeAll()
                     lastNavigatedDate = now
@@ -460,9 +445,8 @@ class PreviewManager: ObservableObject {
             let currentIndex = openWindows.firstIndex(where: { $0.windowID == selectedWindowID }) ?? 0
             let newIndex: Int
             switch direction {
-            case .right: newIndex = min(currentIndex + 1, openWindows.count - 1)
-            case .left:  newIndex = max(currentIndex - 1, 0)
-            default:     return
+            case .next: newIndex = min(currentIndex + 1, openWindows.count - 1)
+            case .prev:  newIndex = max(currentIndex - 1, 0)
             }
             
             if openWindows.indices.contains(newIndex) {
@@ -475,9 +459,8 @@ class PreviewManager: ObservableObject {
             let currentIndex = sortedWorkspaces.firstIndex(of: selectedWorkspace) ?? 0
             let newIndex: Int
             switch direction {
-            case .right: newIndex = min(currentIndex + 1, sortedWorkspaces.count - 1)
-            case .left:  newIndex = max(currentIndex - 1, 0)
-            default:     return
+            case .next: newIndex = min(currentIndex + 1, sortedWorkspaces.count - 1)
+            case .prev:  newIndex = max(currentIndex - 1, 0)
             }
 
             if sortedWorkspaces.indices.contains(newIndex) && newIndex != currentIndex {
