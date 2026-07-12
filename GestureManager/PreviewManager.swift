@@ -13,7 +13,8 @@ enum DirectionSwipe {
         switch self {
         case .next: return "next"
         case .prev: return "prev"
-        default: return ""
+        case .left: return "left"
+        case .right: return "right"
         }
     }
 }
@@ -46,9 +47,11 @@ class PreviewManager: ObservableObject {
     var onHidePreview: (() -> Void)?
 
     private var eventTap: CFMachPort? = nil
+    private var accDisY: Float = 0
     private var accDisX: Float = 0
     private var prevTouchPositions: [String: NSPoint] = [:]
     private var gestureInProgress = false
+    private var verticalLocked = false
     private var gestureStartTime: Date?
     private var previewThresholdMs: Double = 100.0
     private var navigationMode = false
@@ -227,11 +230,12 @@ class PreviewManager: ObservableObject {
             gestureInProgress = true
             dynamicFingerCount = count
             gestureActionTriggered = false
-            accDisX = 0
+            accDisX = 0; accDisY = 0
             prevTouchPositions.removeAll()
             gestureStartTime = Date()
             navigationMode = showPreview
             hasOpenedLaunchNext = false
+            verticalLocked = false
         } else if !navigationMode && count > dynamicFingerCount {
             dynamicFingerCount = count
         }
@@ -283,7 +287,12 @@ class PreviewManager: ObservableObject {
 
         if directions.count < count || count == 0 { return }
 
+        if abs(totalY) > abs(totalX) && !navigationMode {
+            verticalLocked = true
+        }
+
         accDisX += totalX
+        accDisY += totalY
 
         let leftCount  = directions.filter { $0 == .left }.count
         let rightCount = directions.filter { $0 == .right }.count
@@ -296,7 +305,7 @@ class PreviewManager: ObservableObject {
 
             if elapsed > previewThresholdMs {
                 if !showPreview {
-                    let totalMovement = abs(accDisX) + abs(totalY)
+                    let totalMovement = abs(accDisX) + abs(accDisY)
                     if totalMovement < 0.015 { return }
 
                     gestureActionTriggered = true
@@ -347,21 +356,25 @@ class PreviewManager: ObservableObject {
             let isStrictSplitGesture = (downCount == 2 && upCount == 1) || (upCount == 2 && downCount == 1)
 
             if isStrictSplitGesture {
-                gestureActionTriggered = true
-                openLaunchNext()
-                return
+                if abs(accDisY) > 0.04 {
+                    gestureActionTriggered = true
+                    openLaunchNext()
+                    return
+                }
             }
 
-            if (leftCount >= 2) {
-                gestureActionTriggered = true
-                switchWorkspaceDirectional(direction: .prev)
-                return
-            }
+            if abs(accDisX) > 0.02 {
+                if leftCount >= 2 && !verticalLocked {
+                    gestureActionTriggered = true
+                    switchWorkspaceDirectional(direction: .prev)
+                    return
+                }
 
-            if (rightCount >= 2) {
-                gestureActionTriggered = true
-                switchWorkspaceDirectional(direction: .next)
-                return
+                if rightCount >= 2 && !verticalLocked {
+                    gestureActionTriggered = true
+                    switchWorkspaceDirectional(direction: .next)
+                    return
+                }
             }
         }
     }
@@ -376,7 +389,7 @@ class PreviewManager: ObservableObject {
         if showPreview {
             if let startTime = gestureStartTime, Date().timeIntervalSince(startTime) * 1000 < previewThresholdMs {
                 let hasNavigated = windowSwitcherMode ? (!selectedWindowID.isEmpty) : (!selectedWorkspace.isEmpty)
-                if !hasNavigated || abs(accDisX) > 0.05 {
+                if !hasNavigated || abs(accDisY) > 0.05 {
                     hidePreview()
                     resetGesture()
                     return
@@ -399,13 +412,17 @@ class PreviewManager: ObservableObject {
                 
                 if durationMs < previewThresholdMs {
                     if dynamicFingerCount == 3 {
-                        resetGesture()
-                        quickSwitchWorkspace()
-                        return
+                        if accDisY < -0.01 {
+                            resetGesture()
+                            quickSwitchWorkspace()
+                            return
+                        }
                     } else if dynamicFingerCount == 4 {
-                        resetGesture()
-                        switchToLastUsedApp()
-                        return
+                        if abs(accDisY) > 0.01 {
+                            resetGesture()
+                            switchToLastUsedApp()
+                            return
+                        }
                     }
                 }
             }
@@ -459,8 +476,9 @@ class PreviewManager: ObservableObject {
     
     private func resetGesture() {
         gestureInProgress = false
-        accDisX = 0
+        accDisY = 0; accDisX = 0
         prevTouchPositions.removeAll()
+        verticalLocked = false
         gestureStartTime = nil
         navigationMode = false
         hasOpenedLaunchNext = false
