@@ -7,4 +7,4 @@
 **3ds** - quick workspace switching (aerospace workspace-back-and-forth)\
 **3dl** - show workspace switcher panel\
 **4ds** - quick app switching (simulates cmd-tab behaviour)\
-**4dl** - show app switcher panel\
+**4dl** - show app switcher panel
