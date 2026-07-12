@@ -43,9 +43,13 @@ struct WorkspacePreviewView: View {
                     // Row 1: Titles
                     HStack(alignment: .center, spacing: 16) {
                         ForEach(workspaces, id: \.self) { ws in
+                            let isSelected = (ws == previewManager.selectedWorkspace)
+                            
                             Text(ws)
                                 .font(.system(size: 24, weight: .black))
-                                .foregroundColor(ws == previewManager.selectedWorkspace ? .white : .primary.opacity(0.7))
+                                .foregroundColor(isSelected ? Color(nsColor: .headerTextColor) : Color(nsColor: .secondaryLabelColor))
+                                // This shadow serves as a legibility safety net on extreme light backgrounds
+                                .shadow(color: Color.black.opacity(isSelected ? 0.2 : 0.1), radius: isSelected ? 4 : 2, x: 0, y: 1)
                                 .frame(width: 110, alignment: .center)
                         }
                     }

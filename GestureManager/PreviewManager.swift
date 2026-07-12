@@ -62,6 +62,7 @@ class PreviewManager: ObservableObject {
     private var dynamicFingerCount = 3
     private var cursorLockPosition: NSPoint? = nil
     private var lastTapReleaseTime: Date? = nil
+    private var isTapDragBypassActive = false
 
     private func runAerospaceCLI(args: [String], stdin: String = "") -> Result<String, PreviewError> {
         let task = Process()
@@ -217,11 +218,19 @@ class PreviewManager: ObservableObject {
 
         if !gestureInProgress {
             let incomingCount = activeTouches.count
+            let now = Date()
             
+            // --- DETECT TAP-LIFT-DRAG SEQUENCES ---
             if let lastRelease = lastTapReleaseTime {
-                let elapsedMs = Date().timeIntervalSince(lastRelease) * 1000
-                let requiredCooldown: Double = (incomingCount == 3) ? 0.0 : 100.0
+                let elapsedMs = now.timeIntervalSince(lastRelease) * 1000
                 
+                // If a new touch sequence begins within 300ms of a release,
+                // it's a tap-and-drag follow-through.
+                if elapsedMs < 300.0 {
+                    isTapDragBypassActive = true
+                }
+                
+                let requiredCooldown: Double = (incomingCount == 3) ? 0.0 : 100.0
                 if elapsedMs < requiredCooldown {
                     return
                 }
@@ -230,15 +239,18 @@ class PreviewManager: ObservableObject {
             gestureInProgress = true
             dynamicFingerCount = count
             gestureActionTriggered = false
+            isTapDragBypassActive = isTapDragBypassActive || showPreview // Keep active if navigating
             accDisX = 0; accDisY = 0
             prevTouchPositions.removeAll()
-            gestureStartTime = Date()
+            gestureStartTime = now
             navigationMode = showPreview
             hasOpenedLaunchNext = false
             verticalLocked = false
         } else if !navigationMode && count > dynamicFingerCount {
             dynamicFingerCount = count
         }
+        
+        if isTapDragBypassActive && !navigationMode { return }
         
         if dynamicFingerCount == 3 && ignoreNextDown {
             var downCountTemp = 0
@@ -476,6 +488,7 @@ class PreviewManager: ObservableObject {
     
     private func resetGesture() {
         gestureInProgress = false
+        isTapDragBypassActive = false
         accDisY = 0; accDisX = 0
         prevTouchPositions.removeAll()
         verticalLocked = false
