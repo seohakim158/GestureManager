@@ -12,3 +12,6 @@
 **4dl** - show app switcher panel
 
 *Notations in the format \[# of fingers\]\[direction\]\[long/short\]*
+
+### Install
+`brew install --cask seohakim158/gesturemanager/gesturemanager`
